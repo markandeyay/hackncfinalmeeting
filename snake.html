@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Snake</title>
+<style>
+  body { margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
+         background: #2f6b3a; font-family: Verdana, sans-serif; }
+  #wrap { position: relative; width: 600px; height: 600px; box-shadow: 0 8px 30px rgba(0,0,0,.4); border-radius: 8px; overflow: hidden; }
+  canvas { display: block; background: #a8e08f; }
+  #score { position: absolute; top: 10px; left: 14px; font-weight: bold; color: #1d4d26; font-size: 18px; pointer-events: none; }
+  #pause { position: absolute; top: 8px; right: 10px; width: 36px; height: 36px; border: none; border-radius: 8px;
+           background: #1d4d26; color: #fff; font-size: 16px; cursor: pointer; }
+  #pause:hover { background: #2e7d3a; }
+  #menu { position: absolute; inset: 0; background: rgba(20,60,28,.92); color: #eaffe0; display: flex; flex-direction: column;
+          align-items: center; justify-content: center; gap: 14px; text-align: center; }
+  #menu.hidden, #pause.hidden { display: none; }
+  h1 { margin: 0; font-size: 44px; letter-spacing: 3px; }
+  h2 { margin: 6px 0 0; font-size: 14px; text-transform: uppercase; letter-spacing: 2px; opacity: .8; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
+  .opt { padding: 8px 14px; border: 2px solid #7ac36a; border-radius: 8px; background: transparent; color: #eaffe0; cursor: pointer; font-size: 14px; }
+  .opt.sel { background: #7ac36a; color: #14301a; font-weight: bold; }
+  #desc { font-size: 13px; opacity: .85; max-width: 380px; min-height: 34px; }
+  #start { margin-top: 8px; padding: 12px 40px; font-size: 20px; font-weight: bold; border: none; border-radius: 10px;
+           background: #e53935; color: #fff; cursor: pointer; }
+  #start:hover { background: #ff5247; }
+  #msg { font-size: 16px; min-height: 20px; color: #ffd966; }
+  .hint { font-size: 12px; opacity: .6; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <canvas id="c" width="600" height="600"></canvas>
+  <div id="score">Score: 0</div>
+  <button id="pause" class="hidden" title="Menu">&#10074;&#10074;</button>
+  <div id="menu">
+    <h1>SNAKE</h1>
+    <div id="msg"></div>
+    <h2>Game mode</h2>
+    <div class="row" id="modes"></div>
+    <div id="desc"></div>
+    <h2>Skin</h2>
+    <div class="row" id="skins"></div>
+    <button id="start">Start</button>
+    <div class="hint">Use the arrow keys to move</div>
+  </div>
+</div>
+
+<script>
+const MODES = {
+  classic: { name: "Classic",  desc: "Eat apples, grow longer, don't hit the walls or yourself." },
+  speed:   { name: "Speed Up", desc: "Every apple you eat makes the snake faster." },
+  expand:  { name: "Expanding World", desc: "The world grows with every apple and the edges wrap around. Only hitting yourself ends the game." }
+};
+
+// Each skin returns a colour for segment i of n (0 = head).
+const SKINS = {
+  classic: { name: "Classic", color: (i) => i === 0 ? "#1b7a2b" : "#2e9e40" },
+  stripes: { name: "Stripes", color: (i) => i === 0 ? "#145c20" : (i % 2 ? "#2e9e40" : "#1f7d31") },
+  forest:  { name: "Forest",  color: (i, n) => `hsl(130, 60%, ${22 + 28 * (i / Math.max(n - 1, 1))}%)` },
+  rainbow: { name: "Rainbow", color: (i) => i === 0 ? "#145c20" : `hsl(${(i * 28) % 360}, 70%, 45%)` }
+};
+
+const canvas = document.getElementById("c"), ctx = canvas.getContext("2d");
+const SIZE = canvas.width;
+const menu = document.getElementById("menu"), pauseBtn = document.getElementById("pause");
+const scoreEl = document.getElementById("score"), msgEl = document.getElementById("msg");
+const startBtn = document.getElementById("start");
+
+let mode = "classic", skin = "classic";
+let n, snake, dir, queue, apple, score, speed, timer, inProgress = false, running = false;
+
+function buildPicker(id, items, getSel, setSel) {
+  const el = document.getElementById(id);
+  el.innerHTML = "";
+  for (const key in items) {
+    const b = document.createElement("button");
+    b.className = "opt" + (getSel() === key ? " sel" : "");
+    b.textContent = items[key].name;
+    b.onclick = () => { setSel(key); refreshMenu(); };
+    el.appendChild(b);
+  }
+}
+function refreshMenu() {
+  buildPicker("modes", MODES, () => mode, k => { mode = k; inProgress = false; });
+  buildPicker("skins", SKINS, () => skin, k => skin = k);
+  document.getElementById("desc").textContent = MODES[mode].desc;
+  startBtn.textContent = inProgress ? "Resume" : "Start";
+  if (inProgress) draw();
+}
+
+function newGame() {
+  n = mode === "expand" ? 12 : 20;
+  const m = Math.floor(n / 2);
+  snake = [{x: m, y: m}, {x: m - 1, y: m}, {x: m - 2, y: m}];
+  dir = {x: 1, y: 0}; queue = [];
+  score = 0; speed = 140;
+  placeApple();
+  inProgress = true;
+  updateScore();
+}
+
+function placeApple() {
+  let p;
+  do { p = {x: Math.floor(Math.random() * n), y: Math.floor(Math.random() * n)}; }
+  while (snake.some(s => s.x === p.x && s.y === p.y));
+  apple = p;
+}
+
+function updateScore() { scoreEl.textContent = "Score: " + score; }
+
+function tick() {
+  if (!running) return;
+  if (queue.length) dir = queue.shift();
+  let head = {x: snake[0].x + dir.x, y: snake[0].y + dir.y};
+
+  if (mode === "expand") {
+    head.x = (head.x + n) % n; head.y = (head.y + n) % n;
+  } else if (head.x < 0 || head.y < 0 || head.x >= n || head.y >= n) return gameOver();
+
+  const ate = head.x === apple.x && head.y === apple.y;
+  const body = ate ? snake : snake.slice(0, -1);
+  if (body.some(s => s.x === head.x && s.y === head.y)) return gameOver();
+
+  snake.unshift(head);
+  if (ate) {
+    score++; updateScore();
+    if (mode === "speed") speed = Math.max(40, speed - 8);
+    if (mode === "expand") growWorld();
+    placeApple();
+  } else snake.pop();
+
+  draw();
+  timer = setTimeout(tick, speed);
+}
+
+// Add a ring of cells around the board, shifting everything so the snake stays put.
+function growWorld() {
+  n += 2;
+  for (const s of snake) { s.x++; s.y++; }
+}
+
+function gameOver() {
+  running = false; inProgress = false;
+  msgEl.textContent = "Game over! Score: " + score;
+  pauseBtn.classList.add("hidden");
+  menu.classList.remove("hidden");
+  refreshMenu();
+}
+
+function start() {
+  if (!inProgress) newGame();
+  msgEl.textContent = "";
+  menu.classList.add("hidden");
+  pauseBtn.classList.remove("hidden");
+  running = true;
+  clearTimeout(timer);
+  draw();
+  timer = setTimeout(tick, speed);
+}
+
+function pause() {
+  running = false; clearTimeout(timer);
+  menu.classList.remove("hidden");
+  pauseBtn.classList.add("hidden");
+  msgEl.textContent = "Paused";
+  refreshMenu();
+}
+
+function draw() {
+  const cell = SIZE / n;
+  ctx.fillStyle = "#a8e08f"; ctx.fillRect(0, 0, SIZE, SIZE);
+  // subtle checkerboard
+  ctx.fillStyle = "#9cd883";
+  if (n <= 40) for (let x = 0; x < n; x++) for (let y = 0; y < n; y++)
+    if ((x + y) % 2) ctx.fillRect(x * cell, y * cell, cell, cell);
+
+  // apple
+  const ax = apple.x * cell, ay = apple.y * cell;
+  ctx.fillStyle = "#e53935";
+  ctx.beginPath(); ctx.arc(ax + cell / 2, ay + cell / 2 + cell * .05, cell * .4, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = "#5d3a1a"; ctx.fillRect(ax + cell * .47, ay + cell * .08, cell * .07, cell * .2);
+
+  // snake (draw tail first so head is on top)
+  const pad = cell * 0.06;
+  for (let i = snake.length - 1; i >= 0; i--) {
+    ctx.fillStyle = SKINS[skin].color(i, snake.length);
+    const s = snake[i];
+    ctx.beginPath();
+    ctx.roundRect(s.x * cell + pad, s.y * cell + pad, cell - pad * 2, cell - pad * 2, cell * .25);
+    ctx.fill();
+  }
+  // eyes
+  const h = snake[0], e = cell * .09;
+  const px = h.x * cell + cell / 2, py = h.y * cell + cell / 2;
+  const ox = dir.y * cell * .2, oy = dir.x * cell * .2, fx = dir.x * cell * .15, fy = dir.y * cell * .15;
+  ctx.fillStyle = "#fff";
+  for (const sgn of [-1, 1]) { ctx.beginPath(); ctx.arc(px + fx + ox * sgn, py + fy + oy * sgn, e * 1.5, 0, 7); ctx.fill(); }
+  ctx.fillStyle = "#000";
+  for (const sgn of [-1, 1]) { ctx.beginPath(); ctx.arc(px + fx + ox * sgn, py + fy + oy * sgn, e * .7, 0, 7); ctx.fill(); }
+}
+
+const KEYS = { ArrowUp: {x: 0, y: -1}, ArrowDown: {x: 0, y: 1}, ArrowLeft: {x: -1, y: 0}, ArrowRight: {x: 1, y: 0} };
+document.addEventListener("keydown", e => {
+  const d = KEYS[e.key];
+  if (!d) return;
+  e.preventDefault();
+  if (!running) return;
+  const last = queue.length ? queue[queue.length - 1] : dir;
+  if (d.x === -last.x && d.y === -last.y) return; // no reversing
+  if (d.x === last.x && d.y === last.y) return;
+  if (queue.length < 3) queue.push(d);
+});
+
+startBtn.onclick = start;
+pauseBtn.onclick = pause;
+refreshMenu();
+
+// Preview a snake behind the menu
+n = 20; snake = [{x: 10, y: 10}, {x: 9, y: 10}, {x: 8, y: 10}]; dir = {x: 1, y: 0}; apple = {x: 14, y: 10};
+draw();
+</script>
+</body>
+</html>
