@@ -54,11 +54,44 @@ const MODES = {
 };
 
 // Each skin returns a colour for segment i of n (0 = head).
+// Optional decorate(ctx, x, y, cell, i) draws extra details on top of a segment (px coordinates).
 const SKINS = {
-  classic: { name: "Classic", color: (i) => i === 0 ? "#1b7a2b" : "#2e9e40" },
-  stripes: { name: "Stripes", color: (i) => i === 0 ? "#145c20" : (i % 2 ? "#2e9e40" : "#1f7d31") },
-  forest:  { name: "Forest",  color: (i, n) => `hsl(130, 60%, ${22 + 28 * (i / Math.max(n - 1, 1))}%)` },
-  rainbow: { name: "Rainbow", color: (i) => i === 0 ? "#145c20" : `hsl(${(i * 28) % 360}, 70%, 45%)` }
+  watermelon: {
+    name: "Watermelon",
+    color: (i) => i === 0 ? "#f0556e" : (i % 2 ? "#2e9e40" : "#14602a"),
+    decorate(ctx, x, y, cell, i) {
+      if (i === 0) return;
+      ctx.fillStyle = "#9be28a"; // pale rind line across each segment
+      ctx.fillRect(x + cell * .2, y + cell * .45, cell * .6, cell * .1);
+    }
+  },
+  orange: {
+    name: "Orange",
+    color: (i) => i === 0 ? "#f57c00" : "#ff9a1f",
+    decorate(ctx, x, y, cell, i) {
+      ctx.strokeStyle = "#ffd88a"; ctx.lineWidth = Math.max(1, cell * .07); // citrus-slice ring
+      ctx.beginPath(); ctx.arc(x + cell / 2, y + cell / 2, cell * .28, 0, Math.PI * 2); ctx.stroke();
+      if (i === 0) { // leaf
+        ctx.fillStyle = "#2e9e40";
+        ctx.beginPath(); ctx.ellipse(x + cell * .5, y + cell * .12, cell * .2, cell * .09, -.5, 0, Math.PI * 2); ctx.fill();
+      }
+    }
+  },
+  tropical: {
+    name: "Tropical Mix",
+    color: (i) => i === 0 ? "#2e9e40" : ["#ffd93b", "#ff8c2a", "#ff4fa0"][i % 3],
+    decorate(ctx, x, y, cell, i) {
+      if (i !== 0) return;
+      ctx.fillStyle = "#1b6b2a"; // spikes
+      for (const t of [.25, .5, .75]) {
+        ctx.beginPath();
+        ctx.moveTo(x + cell * (t - .08), y + cell * .1);
+        ctx.lineTo(x + cell * t, y - cell * .08);
+        ctx.lineTo(x + cell * (t + .08), y + cell * .1);
+        ctx.fill();
+      }
+    }
+  }
 };
 
 const canvas = document.getElementById("c"), ctx = canvas.getContext("2d");
@@ -67,7 +100,7 @@ const menu = document.getElementById("menu"), pauseBtn = document.getElementById
 const scoreEl = document.getElementById("score"), msgEl = document.getElementById("msg");
 const startBtn = document.getElementById("start");
 
-let mode = "classic", skin = "classic";
+let mode = "classic", skin = "watermelon";
 let n, snake, dir, queue, apple, score, speed, timer, inProgress = false, running = false;
 
 function buildPicker(id, items, getSel, setSel) {
@@ -189,6 +222,7 @@ function draw() {
     ctx.beginPath();
     ctx.roundRect(s.x * cell + pad, s.y * cell + pad, cell - pad * 2, cell - pad * 2, cell * .25);
     ctx.fill();
+    if (SKINS[skin].decorate) SKINS[skin].decorate(ctx, s.x * cell, s.y * cell, cell, i);
   }
   // eyes
   const h = snake[0], e = cell * .09;
